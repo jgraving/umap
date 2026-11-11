@@ -46,6 +46,7 @@ from umap.utils import (
     make_epochs_per_sample,
 )
 from umap.spectral import spectral_layout, tswspectral_layout
+from umap.bce import optimize_layout_bce
 from umap.layouts import (
     optimize_layout_euclidean,
     optimize_layout_generic,
@@ -1646,6 +1647,11 @@ def simplicial_set_embedding(
     init_rescale="isotropic",
     init_scale_factor=1.0,
     recursive_init_kwds=None,
+    objective="umap",
+    learnable_bias=True,
+    kernel_bias=0.0,
+    negative_reduction="mean",
+    bias_learning_rate=0.1,
 ):
     """Perform a fuzzy simplicial set embedding, using a specified
     initialisation method and then minimizing the fuzzy set cross entropy
@@ -2007,7 +2013,33 @@ def simplicial_set_embedding(
             graph=graph,
         )
 
-    if euclidean_output:
+    if objective == "bce":
+        if not euclidean_output or densmap or not legacy_optimizer:
+            raise ValueError(
+                "BCE requires a Euclidean compatibility layout without densMAP"
+            )
+        coo_graph = graph.tocoo()
+        embedding, fitted_bias = optimize_layout_bce(
+            embedding,
+            embedding,
+            coo_graph.row,
+            coo_graph.col,
+            n_epochs,
+            epochs_per_sample,
+            a,
+            b,
+            rng_state,
+            negative_sample_rate=negative_sample_rate,
+            initial_alpha=initial_alpha,
+            repulsion_strength=gamma,
+            kernel_bias=kernel_bias,
+            learnable_bias=learnable_bias,
+            negative_reduction=negative_reduction,
+            bias_learning_rate=bias_learning_rate,
+            verbose=verbose,
+        )
+        aux_data["kernel_bias"] = fitted_bias
+    elif euclidean_output:
         if legacy_optimizer:
             coo_graph = graph.tocoo()
             head = coo_graph.row
@@ -2397,6 +2429,26 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         time care must be taken and dictionary elements must be ordered
         appropriately; this will hopefully be fixed in the future.
 
+    objective: {"umap", "bce"} (optional, default "umap")
+        Use the existing UMAP layout or experimental sampled BCE with
+        epoch-batched Adam. BCE requires the compatibility graph/initialization
+        pipeline and Euclidean output; see ``doc/balanced_bce.rst``.
+
+    learnable_bias: bool (optional, default True)
+        For BCE, learn a global logit offset, exposed as ``kernel_bias_``.
+        This is separate from the kernel shape parameter ``b``.
+
+    kernel_bias: float (optional, default 0.0)
+        Initial (or fixed) BCE logit offset: probability = sigmoid(s - bias).
+
+    negative_reduction: {"mean", "sum"} (optional, default "mean")
+        For BCE, average or sum the K negative losses per positive edge.
+        Mean with repulsion_strength=1 gives the balanced JS/BCE objective.
+
+    bias_learning_rate: float (optional, default 0.1)
+        Initial Adam learning rate for the BCE scalar bias. The embedding
+        uses ``learning_rate``. Bias is fixed during transform.
+
     n_epochs: int (optional, default None)
         The number of training epochs to be used in optimizing the
         low dimensional embedding. Larger values result in more accurate
@@ -2765,7 +2817,17 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         init_rescale="isotropic",
         init_scale_factor=1.0,
         recursive_init_kwds=None,
+        objective="umap",
+        learnable_bias=True,
+        kernel_bias=0.0,
+        negative_reduction="mean",
+        bias_learning_rate=0.1,
     ):
+        self.objective = objective
+        self.learnable_bias = learnable_bias
+        self.kernel_bias = kernel_bias
+        self.negative_reduction = negative_reduction
+        self.bias_learning_rate = bias_learning_rate
         self.n_neighbors = n_neighbors
         self.metric = metric
         self.output_metric = output_metric
@@ -2853,6 +2915,55 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
 
     def _validate_parameters(self):
         self._resolve_layout_parameters()
+        if self.objective not in ("umap", "bce"):
+            raise ValueError("objective must be 'umap' or 'bce'")
+        if not isinstance(self.learnable_bias, (bool, np.bool_)):
+            raise ValueError("learnable_bias must be a boolean")
+        if self.negative_reduction not in ("mean", "sum"):
+            raise ValueError("negative_reduction must be 'mean' or 'sum'")
+        for name, value in (
+            ("kernel_bias", self.kernel_bias),
+            ("bias_learning_rate", self.bias_learning_rate),
+        ):
+            if (
+                isinstance(value, (bool, np.bool_))
+                or not isinstance(value, (int, float, np.integer, np.floating))
+                or not np.isfinite(value)
+            ):
+                raise ValueError(f"{name} must be a finite number")
+        if self.bias_learning_rate <= 0:
+            raise ValueError("bias_learning_rate must be positive")
+        if self.objective == "bce":
+            if type(self)._fit_embed_data is not UMAP._fit_embed_data:
+                raise ValueError(
+                    "BCE is not supported by subclasses overriding _fit_embed_data"
+                )
+            if self._optimizer != "compatibility" or not self._compatibility_layout:
+                raise ValueError(
+                    "objective='bce' requires compatibility_layout=True "
+                    "and optimizer=None or 'compatibility'; it uses "
+                    "its own epoch-batched Adam updates"
+                )
+            if self.output_metric not in ("euclidean", "l2") or self.densmap:
+                raise ValueError(
+                    "objective='bce' requires Euclidean output without densMAP"
+                )
+            if (
+                isinstance(self.negative_sample_rate, (bool, np.bool_))
+                or not isinstance(self.negative_sample_rate, (int, np.integer))
+                or self.negative_sample_rate < 1
+            ):
+                raise ValueError("BCE negative_sample_rate must be a positive integer")
+            if self.negative_sample_scale is not None or self.exclude_graph_neighbors:
+                raise ValueError(
+                    "BCE uses uniform negatives; negative_sample_scale and "
+                    "exclude_graph_neighbors are unsupported"
+                )
+            if not np.isfinite(self.repulsion_strength) or self.repulsion_strength <= 0:
+                raise ValueError("BCE repulsion_strength must be finite and positive")
+            for name, value in (("a", self.a), ("b", self.b)):
+                if value is not None and (not np.isfinite(value) or value <= 0):
+                    raise ValueError(f"BCE kernel {name} must be finite and positive")
         _validate_recursive_init_kwds(self.recursive_init_kwds)
         if self.coarse_layout_weights not in ("transition", "fuzzy_union"):
             raise ValueError(
@@ -3287,6 +3398,8 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         self._b = flattened([m._b for m in models])
 
     def __mul__(self, other):
+        if self.objective == "bce" or other.objective == "bce":
+            raise NotImplementedError("Combining BCE layouts is not implemented")
 
         check_is_fitted(
             self, attributes=["graph_"], msg="Only fitted UMAP models can be combined"
@@ -3360,6 +3473,8 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         return result
 
     def __add__(self, other):
+        if self.objective == "bce" or other.objective == "bce":
+            raise NotImplementedError("Combining BCE layouts is not implemented")
 
         check_is_fitted(
             self, attributes=["graph_"], msg="Only fitted UMAP models can be combined"
@@ -3431,6 +3546,8 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         return result
 
     def __sub__(self, other):
+        if self.objective == "bce" or other.objective == "bce":
+            raise NotImplementedError("Combining BCE layouts is not implemented")
 
         check_is_fitted(
             self, attributes=["graph_"], msg="Only fitted UMAP models can be combined"
@@ -3573,6 +3690,11 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             self.knn_search_index = self.precomputed_knn[2]
 
         self._validate_parameters()
+        # Initialize even for the single-sample / graph-only early-return paths.
+        if self.objective == "bce":
+            self.kernel_bias_ = float(self.kernel_bias)
+        elif hasattr(self, "kernel_bias_"):
+            del self.kernel_bias_
         if init is None:
             init = self._init
 
@@ -4073,7 +4195,7 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         replaced by subclasses. Arbitrary keyword arguments can be passed
         through .fit() and .fit_transform().
         """
-        return simplicial_set_embedding(
+        embedding, aux_data = simplicial_set_embedding(
             X,
             self.graph_,
             self.n_components,
@@ -4098,10 +4220,20 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             tqdm_kwds=self.tqdm_kwds,
             **self._layout_kwds(),
         )
+        if self.objective == "bce":
+            self.kernel_bias_ = aux_data["kernel_bias"]
+        elif hasattr(self, "kernel_bias_"):
+            del self.kernel_bias_
+        return embedding, aux_data
 
     def _layout_kwds(self):
         """Layout options forwarded to ``simplicial_set_embedding``."""
         return dict(
+            objective=self.objective,
+            learnable_bias=self.learnable_bias,
+            kernel_bias=self.kernel_bias,
+            negative_reduction=self.negative_reduction,
+            bias_learning_rate=self.bias_learning_rate,
             compatibility_layout=self._compatibility_layout,
             optimizer=self._optimizer,
             negative_selection_range=self.negative_selection_range,
@@ -4438,7 +4570,28 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         #     tuple(self.output_metric_kwds.values()),
         # )
 
-        if self.output_metric == "euclidean":
+        if self.objective == "bce":
+            embedding, _ = optimize_layout_bce(
+                embedding,
+                self.embedding_,
+                head,
+                tail,
+                n_epochs,
+                epochs_per_sample,
+                self._a,
+                self._b,
+                rng_state,
+                negative_sample_rate=self.negative_sample_rate,
+                initial_alpha=self._initial_alpha / 4.0,
+                repulsion_strength=self.repulsion_strength,
+                kernel_bias=self.kernel_bias_,
+                learnable_bias=False,
+                negative_reduction=self.negative_reduction,
+                bias_learning_rate=self.bias_learning_rate,
+                move_other=False,
+                verbose=self.verbose,
+            )
+        elif self.output_metric == "euclidean":
             if self._optimizer == "compatibility":
                 embedding = optimize_layout_euclidean(
                     embedding,
@@ -4565,6 +4718,10 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             Generated data points new data in data space.
         """
 
+        if self.objective == "bce":
+            raise NotImplementedError(
+                "inverse_transform is not implemented for BCE layouts"
+            )
         if self._sparse_data:
             raise ValueError("Inverse transform not available for sparse input.")
         elif self._inverse_distance_func is None:
@@ -4749,6 +4906,10 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         return inv_transformed_points
 
     def update(self, X, ensure_all_finite=True):
+        if self.objective == "bce":
+            raise NotImplementedError(
+                "update is not implemented for BCE layouts; refit instead"
+            )
         if self.metric in ("bit_hamming", "bit_jaccard"):
             X = check_array(
                 X, dtype=np.uint8, order="C", ensure_all_finite=ensure_all_finite
