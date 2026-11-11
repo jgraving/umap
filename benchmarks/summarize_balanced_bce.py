@@ -70,6 +70,8 @@ fig.suptitle(
     fontweight="bold",
 )
 fig.savefig(root / "balanced_bce.svg")
+svg = root / "balanced_bce.svg"
+svg.write_text("\n".join(line.rstrip() for line in svg.read_text().splitlines()) + "\n")
 if args.preview_png:
     fig.savefig(args.preview_png, dpi=130)
 
@@ -119,7 +121,7 @@ for dataset in ["iris", "digits600"]:
         lines.append("| " + " | ".join([dataset, names[mode], *cells]) + " |")
 lines += [
     "",
-    "## Sensitivity to the number of negatives",
+    "## Trustworthiness versus the number of negatives",
     "",
     "| Dataset | Variant | " + " | ".join(f"K = {k}" for k in counts) + " |",
     "|---|---|" + "---:|" * len(counts),
