@@ -67,8 +67,7 @@ index spaces differ and no index-based self exclusion is applied.
 Relation to the canonical JS bound
 ---------------------------------
 
-Matt Shannon, *Properties of f-divergences and f-GAN training* (2020),
-`equation 39 <https://arxiv.org/pdf/2009.00757>`_, gives the canonical bound
+The canonical JS variational lower bound is
 
 .. math::
 
@@ -146,3 +145,13 @@ See ``benchmarks/results/balanced_bce.csv`` and ``balanced_bce_summary.md``.
 reduction, extreme logits, coincident points, the zero-bias kernel, the canonical
 JS identity, the analytic class-prior shift, fit/transform, serialization,
 reproducibility, validation and backward compatibility.
+
+Embedding plots
+---------------
+
+The benchmark can save coordinates with ``--embeddings``. The committed seed-0
+archive and plots cover all five variants at all six negative counts. Run
+``python benchmarks/plot_bce_embeddings.py`` to recreate the panels. Colors show
+labels unused during fitting; independently zoomed panels retain equal x/y
+scales and report the original RMS radius. See the embedding plots in
+``benchmarks/results/balanced_bce_summary.md``.

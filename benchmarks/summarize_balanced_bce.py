@@ -153,9 +153,13 @@ lines += [
     "",
     f"Python {platform.python_version()}; NumPy {np.__version__}; SciPy {scipy.__version__}; scikit-learn {sklearn.__version__}; Numba {numba.__version__}.",
     "",
-    "## Mathematical reference",
+    "## Objective interpretation",
     "",
-    "Matt Shannon, [Properties of f-divergences and f-GAN training](https://arxiv.org/abs/2009.00757), equation 39. For balanced BCE L (sum of the two class expectations), the canonical JS lower bound is `4 log(2) - 2 L`. See [the objective documentation](../../doc/balanced_bce.rst) for the derivation, fixed-versus-learned intercept distinction, sampling distribution and limitations.",
+    "For balanced BCE L (sum of the two class expectations), the canonical JS lower bound is `4 log(2) - 2 L`. See [the objective documentation](../../doc/balanced_bce.rst) for the derivation, fixed-versus-learned intercept distinction, sampling distribution and limitations.",
     "",
 ]
+if (root / "embeddings_seed0.npz").exists():
+    lines.append(
+        "\n## Embedding plots\n\nThese plots show **seed 0**, selected in advance rather than by visual quality,\nwith the same data, initialization, 200 epochs, and settings as the metric sweep.\nColors denote class labels, which were not used in fitting. Each panel is\ncentered and independently zoomed using equal x/y scale; the raw RMS radius is\nprinted below it. Orientations are arbitrary, and no points are cropped.\n\n### 500 negatives per positive\n\n![Both datasets at K=500](embeddings_k500_seed0.png)\n\n### Iris: all negative counts\n\n![Iris embedding sweep](embeddings_iris_seed0.png)\n\n### Digits: all negative counts\n\n![Digits embedding sweep](embeddings_digits600_seed0.png)\n\nThe saved [coordinates and labels](embeddings_seed0.npz) reproduce these plots:\n\n```bash\npython benchmarks/plot_bce_embeddings.py\n```\n\nTo regenerate the embeddings too:\n\n```bash\npython benchmarks/benchmark_balanced_bce.py --seeds 0 --output /tmp/embedding_metrics.csv --embeddings benchmarks/results/embeddings_seed0.npz\npython benchmarks/plot_bce_embeddings.py\n```\n"
+    )
 (root / "balanced_bce_summary.md").write_text("\n".join(lines))

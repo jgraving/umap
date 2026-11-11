@@ -74,6 +74,39 @@
 
 Python 3.12.14; NumPy 2.3.5; SciPy 1.17.0; scikit-learn 1.8.0; Numba 0.68.1.
 
-## Mathematical reference
+## Objective interpretation
 
-Matt Shannon, [Properties of f-divergences and f-GAN training](https://arxiv.org/abs/2009.00757), equation 39. For balanced BCE L (sum of the two class expectations), the canonical JS lower bound is `4 log(2) - 2 L`. See [the objective documentation](../../doc/balanced_bce.rst) for the derivation, fixed-versus-learned intercept distinction, sampling distribution and limitations.
+For balanced BCE L (sum of the two class expectations), the canonical JS lower bound is `4 log(2) - 2 L`. See [the objective documentation](../../doc/balanced_bce.rst) for the derivation, fixed-versus-learned intercept distinction, sampling distribution and limitations.
+
+## Embedding plots
+
+These plots show **seed 0**, selected in advance rather than by visual quality,
+with the same data, initialization, 200 epochs, and settings as the metric sweep.
+Colors denote class labels, which were not used in fitting. Each panel is
+centered and independently zoomed using equal x/y scale; the raw RMS radius is
+printed below it. Orientations are arbitrary, and no points are cropped.
+
+### 500 negatives per positive
+
+![Both datasets at K=500](embeddings_k500_seed0.png)
+
+### Iris: all negative counts
+
+![Iris embedding sweep](embeddings_iris_seed0.png)
+
+### Digits: all negative counts
+
+![Digits embedding sweep](embeddings_digits600_seed0.png)
+
+The saved [coordinates and labels](embeddings_seed0.npz) reproduce these plots:
+
+```bash
+python benchmarks/plot_bce_embeddings.py
+```
+
+To regenerate the embeddings too:
+
+```bash
+python benchmarks/benchmark_balanced_bce.py --seeds 0 --output /tmp/embedding_metrics.csv --embeddings benchmarks/results/embeddings_seed0.npz
+python benchmarks/plot_bce_embeddings.py
+```

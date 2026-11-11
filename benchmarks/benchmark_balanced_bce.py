@@ -50,7 +50,11 @@ def main():
         "--negative-counts", type=int, nargs="+", default=[1, 5, 15, 50, 100, 500]
     )
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
+    parser.add_argument(
+        "--embeddings", help="Optional NPZ output with coordinates and class labels"
+    )
     args = parser.parse_args()
+    embeddings = {"__epochs": np.array(args.epochs)}
     if min(args.negative_counts) < 1:
         parser.error("negative counts must be positive")
     datasets = [
@@ -97,6 +101,11 @@ def main():
                         started = time.perf_counter()
                         z = model.fit_transform(x)
                         seconds = time.perf_counter() - started
+                        if args.embeddings:
+                            embeddings[f"{dataset}__seed{seed}__k{k}__{mode}"] = (
+                                z.copy()
+                            )
+                            embeddings[f"{dataset}__labels"] = labels
                         row = dict(
                             dataset=dataset,
                             seed=seed,
@@ -126,6 +135,11 @@ def main():
                             round(row["balanced_bce"], 4),
                             flush=True,
                         )
+
+    if args.embeddings:
+        destination = Path(args.embeddings)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(destination, **embeddings)
 
 
 if __name__ == "__main__":

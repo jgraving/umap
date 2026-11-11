@@ -115,7 +115,7 @@ def test_negative_sum_induces_log_k_optimum_shift():
     assert_allclose(summed - mean, np.log(k), atol=1e-6)
 
 
-def test_shannon_canonical_bound_tight_at_log_density_ratio():
+def test_js_bound_tight_at_log_density_ratio():
     p = np.array([0.1, 0.3, 0.6])
     q = np.array([0.5, 0.4, 0.1])
     d = np.log(p / q)
